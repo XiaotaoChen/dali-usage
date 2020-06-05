@@ -11,14 +11,14 @@ import matplotlib.patches as patches
 import random
 
 
-test_data_root = os.environ['DALI_EXTRA_PATH']
-file_root = os.path.join(test_data_root, 'db', 'coco', 'images')
+# test_data_root = os.environ['DALI_EXTRA_PATH']
+# file_root = os.path.join(test_data_root, 'db', 'coco', 'images')
 
-annotations_file = os.path.join(test_data_root, 'db', 'coco', 'instances.json')
+# annotations_file = os.path.join(test_data_root, 'db', 'coco', 'instances.json')
 
-# root_dir = "data/coco"
-# file_root = os.path.join(root_dir, "annotations/instances_valminusminival2014.json")
-# annotations_file = os.path.join(root_dir, "images/val2014")
+root_dir = "/mnt/truenas/scratch/xiaotao.chen/Repositories/simpledet/data/coco"
+file_root = os.path.join(root_dir, "images/val2014")
+annotations_file = os.path.join(root_dir, "annotations/instances_minival2014.json")
 num_gpus = 1
 batch_size = 16
 
