@@ -19,8 +19,12 @@ import random
 root_dir = "/mnt/truenas/scratch/xiaotao.chen/Repositories/simpledet/data/coco"
 file_root = os.path.join(root_dir, "images/val2014")
 annotations_file = os.path.join(root_dir, "annotations/instances_minival2014.json")
+
+file_root = "data/small_img"
+annotations_file = "data/small_ann/new_4.json"
+
 num_gpus = 1
-batch_size = 16
+batch_size = 4
 
 class COCOPipeline(Pipeline):
     def __init__(self, batch_size, num_threads, device_id):
@@ -102,9 +106,9 @@ def test_coco_pipelines():
     bboxes_cpu = pipe_out[0][1]
     labels_cpu = pipe_out[0][2]
 
-    img_index = 4
+    img_index = 2
 
-    bboxes = bboxes_cpu.at(4)
+    bboxes = bboxes_cpu.at(img_index)
 
     img = images_cpu.at(img_index)
 
