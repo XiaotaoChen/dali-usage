@@ -5,12 +5,17 @@ import pprofile, io, contextlib
 import shutil
 
 import matplotlib.pyplot as plt
-import random
+# import random
 import numpy as np
 import cv2
 import matplotlib.patches as patches
 import json
 
+from operator_py.cython.bbox import bbox_overlaps_cython
+from operator_py.bbox_transform import nonlinear_transform as bbox_transform
+
+
+np.random.seed(5)
 
 
 class NormParam:
@@ -26,6 +31,23 @@ class PadParam:
     long = 1200
     max_num_gt = 100
 
+class AnchorTarget2DParam:
+    class generate:
+        short = ResizeParam.short // 16
+        long = ResizeParam.long // 16
+        stride = 16
+        scales = (2, 4, 8, 16, 32)
+        aspects = (0.5, 1.0, 2.0)
+
+    class assign:
+        allowed_border = 0
+        pos_thr = 0.7
+        neg_thr = 0.3
+        min_pos_thr = 0.0
+
+    class sample:
+        image_anchor = 256
+        pos_fraction = 0.5
 
 class DetectionAugmentation(object):
     def __init__(self):
@@ -50,7 +72,6 @@ class ReadRoiRecord(DetectionAugmentation):
 
     def apply(self, input_record):
         image = cv2.imread(input_record["image_url"], cv2.IMREAD_COLOR)
-        print(image.shape)
         input_record["image"] = image[:, :, ::-1].astype("float32")
         # TODO: remove this compatibility method
         input_record["gt_bbox"] = np.concatenate([input_record["gt_bbox"],
@@ -108,7 +129,6 @@ class Resize2DImageBbox(DetectionAugmentation):
 
         input_record["image"] = cv2.resize(image, None, None, scale, scale,
                                            interpolation=cv2.INTER_LINEAR)
-        print(input_record["image"].shape)
         # make sure gt boxes do not overflow
         gt_bbox[:, :4] = gt_bbox[:, :4] * scale
         if image.shape[0] < image.shape[1]:
@@ -423,8 +443,8 @@ def test_loader_tranform():
             Resize2DImageBbox(ResizeParam),
             # Flip2DImageBbox(),
             Pad2DImageBbox(PadParam),
-            # ConvertImageFromHwcToChw(),
-            # AnchorTarget2D(AnchorTarget2DParam)
+            ConvertImageFromHwcToChw(),
+            AnchorTarget2D(AnchorTarget2DParam)
         ]
 
 
@@ -465,7 +485,9 @@ def plt_image():
             ReadRoiRecord(None),
             # Norm2DImage(NormParam),
             Resize2DImageBbox(ResizeParam),
+            Norm2DImage(NormParam),
             Pad2DImageBbox(PadParam),
+            ConvertImageFromHwcToChw(),
         ]
 
 
@@ -478,37 +500,38 @@ def plt_image():
         img_url = record["image_url"]
         print(img_url)
 
-        img = record["image"].astype(np.uint8)
+        img = record["image"]
         bboxes = record["gt_bbox"]
         bboxes = bboxes[bboxes[:,4] !=-1]
         labels = record["gt_class"]
 
 
-        # img = cv2.imread(record["image_url"], cv2.IMREAD_COLOR)
         print(img.shape)
-        fig,ax = plt.subplots(1)
-        ax.imshow(img)
+        print("img [max, min, mean, var]: [{}, {}, {}, {}]".format(np.max(img), np.min(img), np.mean(img), np.var(img)))
+        print("img.type:{}, img[400,400]: {}".format(img.dtype, img[:,400,400]))
+        # fig,ax = plt.subplots(1)
+        # ax.imshow(img)
 
 
-        categories_set = set()
-        for label in labels:
-            categories_set.add(label)
+        # categories_set = set()
+        # for label in labels:
+        #     categories_set.add(label)
 
-        category_id_to_color = dict(
-            [(cat_id, [random.uniform(0, 1), random.uniform(0, 1), random.uniform(0, 1)]) for cat_id in categories_set])
+        # category_id_to_color = dict(
+        #     [(cat_id, [np.random.uniform(0, 1), np.random.uniform(0, 1), np.random.uniform(0, 1)]) for cat_id in categories_set])
 
-        for bbox, label in zip(bboxes, labels):
-            rect = patches.Rectangle(
-                (bbox[0], bbox[1]), # Absolute corner coordinates
-                (bbox[2] - bbox[0]),    # Absolute bounding box width
-                (bbox[3] - bbox[1]),    # Absolute bounding box height
-                linewidth=1,
-                edgecolor=category_id_to_color[label],
-                facecolor='none')
-            ax.add_patch(rect)
-        # plt.show()
-        plt.savefig("py_process_{}.pdf".format(idx))
-        plt.close()
+        # for bbox, label in zip(bboxes, labels):
+        #     rect = patches.Rectangle(
+        #         (bbox[0], bbox[1]), # Absolute corner coordinates
+        #         (bbox[2] - bbox[0]),    # Absolute bounding box width
+        #         (bbox[3] - bbox[1]),    # Absolute bounding box height
+        #         linewidth=1,
+        #         edgecolor=category_id_to_color[label],
+        #         facecolor='none')
+        #     ax.add_patch(rect)
+        # # plt.show()
+        # plt.savefig("py_process_{}.pdf".format(idx))
+        # plt.close()
 
 def generate_20():
     image_list = ['COCO_val2014_000000262148.jpg',
@@ -542,6 +565,6 @@ def generate_20():
 
 
 if __name__ == "__main__":
-    # test_loader_tranform()
-    plt_image()
+    test_loader_tranform()
+    # plt_image()
     # generate_20()

@@ -8,8 +8,10 @@ import os.path
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-import random
+# import random
 
+
+np.random.seed(5)
 
 # test_data_root = os.environ['DALI_EXTRA_PATH']
 # file_root = os.path.join(test_data_root, 'db', 'coco', 'images')
@@ -26,10 +28,31 @@ annotations_file = "data/small_ann/new_4.json"
 num_gpus = 1
 batch_size = 4
 
+def Resize2DBbox(gt_bbox, image_shape, short, long):
+        gt_bbox = gt_bbox.astype(np.float32)
+
+        img_short = min(image.shape[:2])
+        img_long = max(image.shape[:2])
+        scale = min(short / img_short, long / img_long)
+
+        gt_bbox[:] = gt_bbox[:] * scale
+        if image_shape[0] < image_shape[1]:
+            gt_bbox[:, [0, 2]] = np.clip(gt_bbox[:, [0, 2]], 0, long)
+            gt_bbox[:, [1, 3]] = np.clip(gt_bbox[:, [1, 3]], 0, short)
+        else:
+            gt_bbox[:, [0, 2]] = np.clip(gt_bbox[:, [0, 2]], 0, short)
+            gt_bbox[:, [1, 3]] = np.clip(gt_bbox[:, [1, 3]], 0, long)
+        return gt_bbox
+
+def ResizePaddingBbox(gt_bbox, resized_shape, padded_shape):
+    return gt_bbox * resized_shape / padded_shape;
+
+
 class COCOPipeline(Pipeline):
     def __init__(self, batch_size, num_threads, device_id):
         super(COCOPipeline, self).__init__(
-            batch_size, num_threads, device_id, seed=15)
+            batch_size, num_threads, device_id, 
+            exec_async=False, exec_pipelined=False, seed=15)
         self.input = ops.COCOReader(
             file_root=file_root,
             annotations_file=annotations_file,
@@ -57,39 +80,37 @@ class COCOPipeline(Pipeline):
         # resize
         self.resize = ops.Resize(device="gpu", interp_type=types.INTERP_LINEAR,
                                  resize_shorter=800, max_size=1200)
-        # padding
-        self.padding = ops.Pad(device="gpu", fill_value=0, axes=(0,1), shape=(800, 1200))
-                               
 
+        self.shape = ops.Shapes(device="gpu")
+
+        # normalize and convert hwc to chw
+        self.cmnp = ops.CropMirrorNormalize(
+            device="gpu",
+            output_dtype=types.FLOAT,
+            output_layout=types.NCHW,
+            image_type=types.RGB,
+            mean=[0.485 * 255, 0.456 * 255, 0.406 * 255],
+            std=[0.229 * 255, 0.224 * 255, 0.225 * 255])
+        # padding axes=(0,1) -> hwc, axes=(1,2) -> chw
+        self.padding = ops.Pad(device="gpu", fill_value=0, axes=(1,2), shape=(800, 1200))
+        # self.padding = ops.Pad(device="gpu", fill_value=0, axes=(0,1), shape=(800, 1200))
+        
     def define_graph(self):
         rng = self.coin()
         rng2 = self.coin2()
 
         inputs, bboxes, labels = self.input()
         images = self.decode(inputs)
-
         images = self.resize(images)
+        images = self.cmnp(images)
+
+        resized_shape = self.shape(images)
+
         images = self.padding(images)
 
-        # # Paste and BBoxPaste need to use same scales and positions
-        # ratio = self.paste_ratio()
-        # px = self.paste_pos()
-        # py = self.paste_pos()
 
-        # images = self.paste(images, paste_x=px, paste_y=py, ratio=ratio)
-        # bboxes = self.bbpaste(bboxes, paste_x=px, paste_y=py, ratio=ratio)
+        return (images, bboxes, labels, resized_shape)
 
-        # crop_begin, crop_size, bboxes, labels = self.prospective_crop(bboxes, labels)
-        # images = self.slice(images, crop_begin, crop_size)
-
-
-        # images = self.paste(images, paste_x=px, paste_y=py, ratio=ratio)
-        # bboxes = self.bbpaste(bboxes, paste_x=px, paste_y=py, ratio=ratio)
-
-        # images = self.flip(images, horizontal=rng, vertical=rng2)
-        # bboxes = self.bbflip(bboxes, horizontal=rng, vertical=rng2)
-
-        return (images, bboxes, labels)
 
 def test_coco_pipelines():
     start = time()
@@ -105,8 +126,11 @@ def test_coco_pipelines():
     images_cpu = pipe_out[0][0].as_cpu()
     bboxes_cpu = pipe_out[0][1]
     labels_cpu = pipe_out[0][2]
+    resize_shape_cpu = pipe_out[0][3].as_cpu()
 
     img_index = 2
+
+    # print("resize shape:{}, paded shape:{}".format(resize_shape_cpu.at(img_index), paded_shape_cpu.at(img_index)))
 
     bboxes = bboxes_cpu.at(img_index)
 
@@ -114,35 +138,37 @@ def test_coco_pipelines():
 
     H = img.shape[0]
     W = img.shape[1]
-    
-    print("h:{}, w:{}".format(H, W))
+    resized_h = resize_shape_cpu.at(img_index)[0]
+    resized_w = resize_shape_cpu.at(img_index)[1]
 
-    fig,ax = plt.subplots(1)
+    print(img.shape)
+    print("img [max, min, mean, var]: [{}, {}, {}, {}]".format(np.max(img), np.min(img), np.mean(img), np.var(img)))
+    print("img.type:{}, img[400,400]: {}".format(img.dtype, img[:,400,400]))
 
-    ax.imshow(img)
+    # fig,ax = plt.subplots(1)
+    # ax.imshow(img)
 
+    # bboxes = bboxes_cpu.at(img_index)
+    # labels = labels_cpu.at(img_index)
+    # categories_set = set()
+    # for label in labels:
+    #     categories_set.add(label[0])
 
-    bboxes = bboxes_cpu.at(img_index)
-    labels = labels_cpu.at(img_index)
-    categories_set = set()
-    for label in labels:
-        categories_set.add(label[0])
+    # category_id_to_color = dict(
+    #     [(cat_id, [np.random.uniform(0, 1), np.random.uniform(0, 1), np.random.uniform(0, 1)]) for cat_id in categories_set])
 
-    category_id_to_color = dict(
-        [(cat_id, [random.uniform(0, 1), random.uniform(0, 1), random.uniform(0, 1)]) for cat_id in categories_set])
-
-    for bbox, label in zip(bboxes, labels):
-        rect = patches.Rectangle(
-            (bbox[0] * W, bbox[1] * H), # Absolute corner coordinates
-            (bbox[2] - bbox[0]) * W,    # Absolute bounding box width
-            (bbox[3] - bbox[1]) * H,    # Absolute bounding box height
-            linewidth=1,
-            edgecolor=category_id_to_color[label[0]],
-            facecolor='none')
-        ax.add_patch(rect)
-    # plt.show()
-    plt.savefig("test.pdf")
-    plt.close()
+    # for bbox, label in zip(bboxes, labels):
+    #     rect = patches.Rectangle(
+    #         (bbox[0] * resized_w, bbox[1] * resized_h), # Absolute corner coordinates
+    #         (bbox[2] - bbox[0]) * resized_w,    # Absolute bounding box width
+    #         (bbox[3] - bbox[1]) * resized_h,    # Absolute bounding box height
+    #         linewidth=1,
+    #         edgecolor=category_id_to_color[label[0]],
+    #         facecolor='none')
+    #     ax.add_patch(rect)
+    # # plt.show()
+    # plt.savefig("test.pdf")
+    # plt.close()
 
 
 if __name__ == "__main__":
